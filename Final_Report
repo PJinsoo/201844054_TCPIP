@@ -1,0 +1,107 @@
+//TCP/IP 기말고사 과제 TCP/IP 네트워크 프로그래밍 소스 주석
+//201844054 박진수
+
+//chat_serv.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <string.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <pthread.h>
+
+#define BUF_SIZE 100
+#define MAX_CLNT 256
+
+void * handle_clnt(void * arg);
+void send_msg(char * msg, int len);
+void error_handling(char * msg);
+
+int clnt_cnt = 0;            //서버에 접속한 클라이언트의 소켓 관리를 위한 변수
+int clnt_socks[MAX_CLNT];    //서버에 접속한 클라이언트의 소켓 관리를 위한 배열
+pthread_mutex_t mutx;        //쓰레드의 접근을 제한할 뮤텍스 선언
+
+int main(int argc, char *argv[]){
+    int serv_sock, clnt_sock; //서버 소켓과 클라이언트 소켓 변수
+    //서버, 클라이언트의 IP와 Port Number를 입력하기 위해 sockaddr_in 구조체 선언
+    struct sockaddr_in serv_adr, clnt_adr;
+    int clnt_adr_sz;
+    pthread_t t_id; //pthread의 자료형
+    if(argc != 2){
+         printf("Usage : %s <port>\n", argv[0]);
+         exit(1);
+    }
+
+    //mutx 객체를 초기화 시킴(기본 뮤텍스 특징을 사용하기 위해 NULL)
+    pthread_mutex_init(&mutx, NULL);
+    serv_sock = socket(PF_INET, SOCK_STREAM, 0); //서버 소켓 생성
+
+    memset(&serv_adr, 0, sizeof(serv_adr)); //serv_adr 메모리 주소에 0값을 세팅
+    
+    serv_adr.sin_family = AF_INET;              //주소체계 정보 저장
+    serv_adr.sin_addr.s_addr=htonl(INADDR_ANY); //32비트 IP주소 저장, 호스트->네크워크
+    serv_adr.sin_port=htons(atoi(argv[1]));     //16비트 PROT Number 저장
+    
+    
+    if(bind(serv_sock, (struct sockaadr*) &serv_adr, sizeof    (serv_adr))==-1)
+         error_handling("bind() error"); //서버 소켓의 bind 함수에 error 발생 시 출력
+    if(listen(serv_sock, 6) == -1)
+         error_handling("listen() error"); //서버 소켓의 bind 함수에 error 발생 시 출력
+
+    while(1){
+        clnt_adr_sz = sizeof(clnt_adr); //클라이언트의 주소만큼 길이 할당
+        clnt_sock = accept(serv_sock, (struct sockaddr*)&clnt_adr, &clnt_adr_sz); //클라이언트 접속
+
+        pthread_mutex_lock(&mutx); //뮤텍스로 쓰레드 임계영역 설정
+        //새로운 연결이 형성될 때 마다 clnt변수와 clnt_socks배열에 정보 등록
+        clnt_socks[clnt_cnt++] = clnt_sock;
+        pthread_mutex_unlock(&mutx); //뮤텍스 언락, 임계영역 해제
+
+        pthread_create(&t_id, NULL, handle_clnt, (void*)&clnt_sock); //쓰레드 생성
+        pthread_detach(t_id); //종료된 쓰레드는 메모리에서 완전소멸
+        //접속 성공한 클라이언트의 IP를 화면에 출력
+        printf("Connected client IP: %s \n", inet_ntoa(clnt_adr.sin_addr));
+    }
+    close(serv_sock); //서버 소켓 종료
+    return 0;
+}
+
+void * handle_clnt(void * arg){
+    int clnt_sock = *((int*)arg);
+    int str_len = 0, i;
+    char msg[BUF_SIZE];
+
+    //클라이언트가 보낸 메시지의 길이만큼 반복
+    while((str_len = read(clnt_sock, msg, sizeof(msg))) != 0)
+        send_msg(msg, str_len); //모든 클라이언트에게 send
+
+    pthread_mutex_lock(&mutx); //뮤텍스로 쓰레드 임계영역 설정
+    //클라이언트와의 연결을 해제
+    for(i=0; i<clnt_cnt; i++){
+        if(clnt_sock == clnt_socks[i]){
+            while(i++ < clnt_cnt-1)
+                clnt_socks[i] = clnt_socks[i+1]    ;
+                break;
+        }
+    }
+    clnt_cnt--; //소켓 목록에서 삭제
+    pthread_mutex_unlock(&mutx); //임계영역 해제
+    close(clnt_sock); //클라이언트 소켓 소멸
+    return NULL;
+}
+
+//모두에게 메시지를 전송
+void send_msg(char * msg, int len){
+    int i;
+    pthread_mutex_lock(&mutx); //임계영역 설정
+    for(i=0; i<clnt_cnt; i++) //모든 클라이언트에게 send
+        write(clnt_sock[i], msg, len);
+    pthread_mutex_unlock(&mutx); //임계영역 해제
+}
+
+void error_handling(char * msg){
+    fputs(msg, stderr);
+    fputc('\n', stderr);
+    exit(1);
+}
