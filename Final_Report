@@ -2,6 +2,7 @@
 //201844054 박진수
 
 //chat_serv.c (서버소켓)
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -30,23 +31,25 @@ int main(int argc, char *argv[]){
     struct sockaddr_in serv_adr, clnt_adr;
     int clnt_adr_sz;
     pthread_t t_id; //쓰레드 선언
-    if(argc != 2){
+    if(argc != 2){ //IP와 Port가 입력되지 않았다면 경고 출력 후 종료
          printf("Usage : %s <port>\n", argv[0]);
          exit(1);
     }
 
-    //뮤텍스를 만들기 위해 mutx 객체를 초기화 시킴(기본 뮤텍스 특징을 사용하기 위해 NULL)
+    //뮤텍스 생성
+    //뮤텍스를 생성하기 위해 mutx 객체를 초기화 시킴(기본 뮤텍스 특징을 사용하기 위해 NULL)
     pthread_mutex_init(&mutx, NULL);
+    
     serv_sock = socket(PF_INET, SOCK_STREAM, 0); //서버 소켓 생성
 
     //IPv4, IP, Port 할당
     memset(&serv_adr, 0, sizeof(serv_adr));      //serv_adr 메모리 주소에 0값을 세팅
-        serv_adr.sin_family = AF_INET;           //주소체계 정보 저장
+    serv_adr.sin_family = AF_INET;               //주소체계 정보 저장
     serv_adr.sin_addr.s_addr=htonl(INADDR_ANY);  //32비트 IP주소 저장, 호스트->네크워크
     serv_adr.sin_port=htons(atoi(argv[1]));      //16비트 PROT Number 저장
     
     //주소 할당
-    if(bind(serv_sock, (struct sockaadr*) &serv_adr, sizeof    (serv_adr))==-1)
+    if(bind(serv_sock, (struct sockaadr*) &serv_adr, sizeof(serv_adr))==-1)
          error_handling("bind() error"); //서버 소켓의 bind 함수에 error 발생 시 출력
     if(listen(serv_sock, 6) == -1)
          error_handling("listen() error"); //서버 소켓의 bind 함수에 error 발생 시 출력
@@ -55,9 +58,9 @@ int main(int argc, char *argv[]){
         clnt_adr_sz = sizeof(clnt_adr); //클라이언트의 주소만큼 길이 할당
         clnt_sock = accept(serv_sock, (struct sockaddr*)&clnt_adr, &clnt_adr_sz); //클라이언트 접속
 
-        pthread_mutex_lock(&mutx); //뮤텍스로 쓰레드 임계영역 설정(뮤텍스를 잠금)
-        //새로운 연결이 형성될 때 마다 clnt변수와 clnt_socks배열에 정보 등록
+        //새로운 연결이 형성될 때 마다 clnt변수와 clnt_socks배열에 정보 등록하는데
         //이 때 clnt와 clnt_socks배열은 전역변수에 해당하고 해당 값이 변경되니 뮤텍스를 이용해 잠궈 임계영역을 설정함
+        pthread_mutex_lock(&mutx);   //뮤텍스로 쓰레드 임계영역 설정(뮤텍스를 잠금)
         clnt_socks[clnt_cnt++] = clnt_sock;
         pthread_mutex_unlock(&mutx); //뮤텍스 언락, 임계영역 해제
 
@@ -80,7 +83,7 @@ void * handle_clnt(void * arg){
         send_msg(msg, str_len); //접속한 모든 클라이언트에게 send
 
     //클라이언트와의 연결을 해제
-    //이 때 전역변수인 clnt_cnt와 clnt_socks[] 배열의 값이 변경되니 임계영역 설정
+    //이 때 전역변수인 clnt_cnt와 clnt_socks배열의 값이 변경되니 임계영역 설정
     pthread_mutex_lock(&mutx); //뮤텍스로 쓰레드 임계영역 설정
     //현재 쓰레드에서 담당하는 클라이언트 소켓 삭제
     for(i=0; i<clnt_cnt; i++){
@@ -109,4 +112,109 @@ void error_handling(char * msg){
     fputs(msg, stderr);
     fputc('\n', stderr);
     exit(1);
+}
+
+
+//===================================================================================================
+
+
+//chat_clnt.c(클라이언트 소켓)
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h> 
+#include <string.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <pthread.h>
+	
+#define BUF_SIZE 100
+#define NAME_SIZE 20
+	
+void * send_msg(void * arg);
+void * recv_msg(void * arg);
+void error_handling(char * msg);
+
+char name[NAME_SIZE]="[DEFAULT]"; //체팅창 닉네임
+char msg[BUF_SIZE];               //채팅 메시지
+	
+int main(int argc, char *argv[])
+{
+	int sock;
+	struct sockaddr_in serv_addr;     //서버의 IP와 Port Number를 저장할 sockaddr_in 구조체 선언
+	pthread_t snd_thread, rcv_thread; //송신 쓰레드와 수신 쓰레드 선언
+	void * thread_return;             //pthread_join 함수의 매개변수로 사용하기 위해 선언
+	if(argc!=4) { //IP, Port, 사용자 명이 입력되지 않았다면 경고 출력 후 종료
+		printf("Usage : %s <IP> <port> <name>\n", argv[0]);
+		exit(1);
+	 }
+	
+	sprintf(name, "[%s]", argv[3]);       //클라이언트의 닉네임이 출력을 위한 함수
+	sock=socket(PF_INET, SOCK_STREAM, 0); //소켓 생성
+	
+	memset(&serv_addr, 0, sizeof(serv_addr));       //serv_adr 메모리 주소에 0값을 세팅
+	serv_addr.sin_family=AF_INET;                   //주소체계(IPv4) 정보 저장
+	serv_addr.sin_addr.s_addr=inet_addr(argv[1]);   //32비트 IP주소 저장
+	serv_addr.sin_port=htons(atoi(argv[2]));        //16비트 Prot Number 저장
+	
+	//서버에 접속을 위한 connect
+	if(connect(sock, (struct sockaddr*)&serv_addr, sizeof(serv_addr))==-1)
+		error_handling("connect() error"); //connect 실패 시 에러메시지 출력
+	
+	pthread_create(&snd_thread, NULL, send_msg, (void*)&sock); //송신 쓰레드 생성
+	pthread_create(&rcv_thread, NULL, recv_msg, (void*)&sock); //수신 쓰레드 생성
+	
+	//다른 쓰레드가 종료되는걸 기다리는 pthread_join 함수
+	pthread_join(snd_thread, &thread_return); //송신 쓰레드가 종료될 때 까지 대기
+	pthread_join(rcv_thread, &thread_return); //수신 쓰레드가 종료될 때 까지 대기
+	close(sock); //소켓 종료
+	return 0;
+}
+	
+void * send_msg(void * arg)   //송신 쓰레드의 메인
+{
+	int sock=*((int*)arg);
+	char name_msg[NAME_SIZE+BUF_SIZE];  //닉네임과 메시지를 붙여 전송하기 위해 배열 값 지정
+	while(1) 
+	{
+		fgets(msg, BUF_SIZE, stdin); //값을 입력 받음(채팅 치는 것)
+		//종료를 원한다면 Q를 눌러 종료
+		if(!strcmp(msg,"q\n")||!strcmp(msg,"Q\n")) 
+		{
+			close(sock); //소켓 종료
+			exit(0);
+		}
+		//닉네임과 메시지를 붙인 다음 메시지를 출력
+		sprintf(name_msg,"%s %s", name, msg);
+		//서버에 메시지를 보냄
+		write(sock, name_msg, strlen(name_msg));
+	}
+	return NULL;
+}
+	
+void * recv_msg(void * arg)   //수신 쓰레드의 메인
+{
+	int sock=*((int*)arg);
+	char name_msg[NAME_SIZE+BUF_SIZE]; //송신 쓰레드와 동일
+	int str_len;
+	while(1) //메시지 수신을 계속해서 진행해야하니 무한반복
+	{
+	  //서버에서 송신된 메시지를 수신하기 위해 read
+		str_len=read(sock, name_msg, NAME_SIZE+BUF_SIZE-1);
+		
+		//서버와의 연결이 끊어졌다면 str_len의 값은 -1
+		if(str_len==-1)
+		    return (void*)-1; //연결이 끊겼으니 종료를 위해 -1을 리턴
+			
+		name_msg[str_len]=0;
+		fputs(name_msg, stdout); //받은 메시지를 출력
+	}
+	return NULL;
+}
+	
+void error_handling(char *msg)
+{
+	fputs(msg, stderr);
+	fputc('\n', stderr);
+	exit(1);
 }
