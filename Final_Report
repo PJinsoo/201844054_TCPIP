@@ -37,7 +37,7 @@ int main(int argc, char *argv[]){
          exit(1);
     }
 
-    //뮤텍스 생성
+    //뮤텍스 생성, 뮤텍스는 세션을 가지는 쓰레드들의 러닝 타임이 서로 겹치치 않도록 임계영역을 설정해 상호 배제하는 기법
     //뮤텍스를 생성하기 위해 mutx 객체를 초기화 시킴(기본 뮤텍스 특징을 사용하기 위해 NULL)
     pthread_mutex_init(&mutx, NULL);
     
@@ -57,16 +57,16 @@ int main(int argc, char *argv[]){
 
     while(1){
         clnt_adr_sz = sizeof(clnt_adr); //클라이언트의 주소만큼 길이 할당
-        clnt_sock = accept(serv_sock, (struct sockaddr*)&clnt_adr, &clnt_adr_sz); //클라이언트 접속
+        clnt_sock = accept(serv_sock, (struct sockaddr*)&clnt_adr, &clnt_adr_sz); //클라이언트 접속 수락
 
         //새로운 연결이 형성될 때 마다 clnt변수와 clnt_socks배열에 정보 등록하는데
         //이 때 clnt와 clnt_socks배열은 전역변수에 해당하고 해당 값이 변경되니 뮤텍스를 이용해 잠궈 임계영역을 설정함
-        pthread_mutex_lock(&mutx);   //뮤텍스로 쓰레드 임계영역 설정(뮤텍스를 잠금)
+        pthread_mutex_lock(&mutx);   //뮤텍스로 쓰레드 임계영역 설정(뮤텍스로 잠금)
         clnt_socks[clnt_cnt++] = clnt_sock;
         pthread_mutex_unlock(&mutx); //뮤텍스 언락, 임계영역 해제
 
         pthread_create(&t_id, NULL, handle_clnt, (void*)&clnt_sock); //쓰레드 생성
-        pthread_detach(t_id); //종료된 쓰레드는 메모리에서 완전소멸
+        pthread_detach(t_id); //실행 중인 쓰레드를 소멸 시키진 않으나, 종료된 쓰레드는 메모리에서 완전 소멸 시킴
         //접속한 클라이언트의 IP를 화면에 출력
         printf("Connected client IP: %s \n", inet_ntoa(clnt_adr.sin_addr));
     }
